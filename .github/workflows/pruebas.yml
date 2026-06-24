@@ -4,11 +4,12 @@ on:
   push:
     paths:
       - "motor_v3.py"
+      - "lector_global.py"
       - "pruebas_motor_v3.py"
+      - "pruebas_lector_global.py"
       - "datos/**"
       - "requirements.txt"
       - ".github/workflows/pruebas.yml"
-
   workflow_dispatch:
 
 jobs:
@@ -17,7 +18,7 @@ jobs:
 
     steps:
       - name: Descargar repositorio
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Configurar Python
         uses: actions/setup-python@v5
@@ -29,5 +30,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Ejecutar prueba de pagos parciales
+      - name: Ejecutar pruebas del motor FIFO
         run: python pruebas_motor_v3.py
+
+      - name: Ejecutar pruebas del lector GLOBAL
+        run: python pruebas_lector_global.py
