@@ -93,8 +93,7 @@ def main() -> None:
     assert round(float(cjm_adeudo["ADEUDO_EE"]), 2) == 50.00
     assert round(float(cjm_adeudo["ADEUDO_TOTAL"]), 2) == 550.00
     assert cjm_adeudo["MESES_CON_ADEUDO"] == "Mar 2026"
-    assert "Cuota: $500.00" in cjm_adeudo["DETALLE_ADEUDO"]
-    assert "EE: $50.00" in cjm_adeudo["DETALLE_ADEUDO"]
+    assert "DETALLE_ADEUDO" not in adeudos.columns
 
     # AST no pagó; debe aparecer como adeudo completo y no como saldo a favor.
     ast_adeudo = adeudos[adeudos["CLAVE_PLANTEL"] == "AST"].iloc[0]
