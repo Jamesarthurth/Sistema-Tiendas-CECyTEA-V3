@@ -7,10 +7,13 @@ on:
       - "lector_global.py"
       - "procesador_v3.py"
       - "reportes_v3.py"
+      - "exportador_excel_v3.py"
+      - "generar_excel_v3.py"
       - "pruebas_motor_v3.py"
       - "pruebas_lector_global.py"
       - "pruebas_integracion_v3.py"
       - "pruebas_reportes_v3.py"
+      - "pruebas_exportador_excel_v3.py"
       - "datos/**"
       - "requirements.txt"
       - ".github/workflows/pruebas.yml"
@@ -45,3 +48,6 @@ jobs:
 
       - name: Ejecutar pruebas de reportes
         run: python pruebas_reportes_v3.py
+
+      - name: Ejecutar pruebas de exportación Excel
+        run: python pruebas_exportador_excel_v3.py
