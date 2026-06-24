@@ -6,9 +6,11 @@ on:
       - "motor_v3.py"
       - "lector_global.py"
       - "procesador_v3.py"
+      - "reportes_v3.py"
       - "pruebas_motor_v3.py"
       - "pruebas_lector_global.py"
       - "pruebas_integracion_v3.py"
+      - "pruebas_reportes_v3.py"
       - "datos/**"
       - "requirements.txt"
       - ".github/workflows/pruebas.yml"
@@ -40,3 +42,6 @@ jobs:
 
       - name: Ejecutar prueba de integración
         run: python pruebas_integracion_v3.py
+
+      - name: Ejecutar pruebas de reportes
+        run: python pruebas_reportes_v3.py
