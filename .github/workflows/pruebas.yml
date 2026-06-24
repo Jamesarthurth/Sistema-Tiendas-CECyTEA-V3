@@ -1,0 +1,33 @@
+name: Pruebas Motor V3
+
+on:
+  push:
+    paths:
+      - "motor_v3.py"
+      - "pruebas_motor_v3.py"
+      - "datos/**"
+      - "requirements.txt"
+      - ".github/workflows/pruebas.yml"
+
+  workflow_dispatch:
+
+jobs:
+  probar_motor:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v6
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Ejecutar prueba de pagos parciales
+        run: python pruebas_motor_v3.py
