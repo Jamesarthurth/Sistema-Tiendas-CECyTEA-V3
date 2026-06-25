@@ -6,7 +6,9 @@ lista confiable de movimientos de tiendas con esta estructura:
 ID_MOVIMIENTO | FECHA | CLAVE_PLANTEL | PAGO_CUOTA | PAGO_EE | ...
 
 Reglas:
-- Solo considera registros cuyo Nombre(s) contenga "TIEND".
+- Considera registros cuyo Nombre(s) contenga "TIEND".
+- Incluye la excepción de PABELLON DE ARTEAGA, que corresponde a una tienda aunque
+  su nombre no contiene la palabra "TIENDA".
 - Obtiene CLAVE_PLANTEL de los primeros tres caracteres de Matrícula.
 - Suma exclusivamente las columnas cuyo encabezado contiene "CUOTA RECUPERACION".
 - Lee EE únicamente de "OTROS INGRESOS (ENERGIA ELEC)".
@@ -23,6 +25,9 @@ import pandas as pd
 
 HOJA_GLOBAL_POR_DEFECTO = "2024"
 FILA_ENCABEZADO_POR_DEFECTO = 1
+
+# Casos conocidos que sí corresponden a una tienda, aunque el texto no incluya TIEND.
+EXCEPCIONES_TIENDA_POR_NOMBRE = ("PABELLON DE ARTEAGA",)
 
 
 def _normalizar_texto(valor: Any) -> str:
@@ -73,13 +78,13 @@ def normalizar_global(global_df: pd.DataFrame) -> pd.DataFrame:
 
     Se expone por separado para permitir pruebas sin subir ni publicar un GLOBAL real.
     """
+    columnas_salida = [
+        "ID_MOVIMIENTO", "FECHA", "CLAVE_PLANTEL", "MATRICULA",
+        "NOMBRE_ORIGINAL", "REFERENCIA_GLOBAL", "PAGO_CUOTA", "PAGO_EE",
+    ]
+
     if global_df.empty:
-        return pd.DataFrame(
-            columns=[
-                "ID_MOVIMIENTO", "FECHA", "CLAVE_PLANTEL", "MATRICULA",
-                "NOMBRE_ORIGINAL", "REFERENCIA_GLOBAL", "PAGO_CUOTA", "PAGO_EE",
-            ]
-        )
+        return pd.DataFrame(columns=columnas_salida)
 
     columnas = list(global_df.columns)
     columna_fecha = _resolver_columna(columnas, "Fecha")
@@ -103,25 +108,21 @@ def normalizar_global(global_df: pd.DataFrame) -> pd.DataFrame:
 
     base = global_df.copy()
     nombres = base[columna_nombre].fillna("").astype(str)
-    es_tienda = nombres.str.contains("TIEND", case=False, na=False)
+    nombres_normalizados = nombres.map(_normalizar_texto)
 
-    # Excepción: Pabellón de Arteaga aparece como tienda,
-    # pero su nombre no contiene la palabra "TIENDA".
-    es_pabellon_arteaga = nombres.str.contains(
-        "PABELLON DE ARTEAGA",
-        case=False,
-        na=False,
-    )    
+    es_tienda = nombres_normalizados.str.contains("TIEND", regex=False, na=False)
+    es_excepcion = pd.Series(False, index=base.index)
+    for excepcion in EXCEPCIONES_TIENDA_POR_NOMBRE:
+        es_excepcion = es_excepcion | nombres_normalizados.str.contains(
+            excepcion,
+            regex=False,
+            na=False,
+        )
 
-    tiendas = base[es_tienda | es_pabellon_arteaga].copy()
+    tiendas = base.loc[es_tienda | es_excepcion].copy()
 
     if tiendas.empty:
-        return pd.DataFrame(
-            columns=[
-                "ID_MOVIMIENTO", "FECHA", "CLAVE_PLANTEL", "MATRICULA",
-                "NOMBRE_ORIGINAL", "REFERENCIA_GLOBAL", "PAGO_CUOTA", "PAGO_EE",
-            ]
-        )
+        return pd.DataFrame(columns=columnas_salida)
 
     tiendas["FECHA"] = pd.to_datetime(tiendas[columna_fecha], errors="coerce")
     if tiendas["FECHA"].isna().any():
@@ -156,13 +157,7 @@ def normalizar_global(global_df: pd.DataFrame) -> pd.DataFrame:
     # Los renglones de tienda sin pago de cuota ni EE no afectan el motor.
     movimientos = tiendas[(tiendas["PAGO_CUOTA"] > 0) | (tiendas["PAGO_EE"] > 0)].copy()
 
-    salida = movimientos[
-        [
-            "ID_MOVIMIENTO", "FECHA", "CLAVE_PLANTEL", "MATRICULA",
-            "NOMBRE_ORIGINAL", "REFERENCIA_GLOBAL", "PAGO_CUOTA", "PAGO_EE",
-        ]
-    ].sort_values(["FECHA", "ID_MOVIMIENTO"]).reset_index(drop=True)
-
+    salida = movimientos[columnas_salida].sort_values(["FECHA", "ID_MOVIMIENTO"]).reset_index(drop=True)
     return salida
 
 
