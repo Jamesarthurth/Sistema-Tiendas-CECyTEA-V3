@@ -103,7 +103,17 @@ def normalizar_global(global_df: pd.DataFrame) -> pd.DataFrame:
 
     base = global_df.copy()
     nombres = base[columna_nombre].fillna("").astype(str)
-    tiendas = base[nombres.str.contains("TIEND", case=False, na=False)].copy()
+    es_tienda = nombres.str.contains("TIEND", case=False, na=False)
+
+    # Excepción: Pabellón de Arteaga aparece como tienda,
+    # pero su nombre no contiene la palabra "TIENDA".
+    es_pabellon_arteaga = nombres.str.contains(
+        "PABELLON DE ARTEAGA",
+        case=False,
+        na=False,
+    )    
+
+    tiendas = base[es_tienda | es_pabellon_arteaga].copy()
 
     if tiendas.empty:
         return pd.DataFrame(
