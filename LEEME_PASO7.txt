@@ -1,0 +1,17 @@
+PASO 7 · APP STREAMLIT V3
+
+Archivos incluidos:
+- app.py: interfaz web del Sistema de Tiendas Escolares CECyTEA V3.
+- requirements.txt: agrega Streamlit a las dependencias.
+
+Qué hacer en GitHub:
+1. Sube app.py a la raíz del repositorio.
+2. Reemplaza requirements.txt por el incluido.
+3. Haz commit con: Paso 7: interfaz Streamlit V3
+4. Confirma que GitHub Actions siga en verde.
+
+La app pide dos archivos cada vez:
+- GLOBAL.xlsx
+- Machote_Tarifas_CECYTEA_V3.xlsx actualizado
+
+Los archivos se usan sólo durante la sesión. No se guardan en GitHub ni reemplazan el machote oficial.
