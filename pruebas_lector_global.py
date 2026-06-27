@@ -36,6 +36,18 @@ def construir_global_prueba() -> pd.DataFrame:
                 "TOTAL": 99999.0,
             },
             {
+                # Histórico real: aun siendo tienda y teniendo importes, no debe
+                # entrar a V3 porque su fecha es anterior a 2026.
+                "  Fecha": "2025-12-31",
+                "NÚMERO": "HIST-2025",
+                "Matrícula": "CJM9900001",
+                "Nombre(s)": "CECYTEA TIENDA ESCOLAR",
+                "CUOTA RECUPERACION\nCJM": 99999.0,
+                "CUOTA RECUPERACION\nAST": 0.0,
+                "OTROS INGRESOS (ENERGIA ELEC)": 99999.0,
+                "TOTAL": 99999.0,
+            },
+            {
                 # No contiene TIEND: debe excluirse aunque tenga importes.
                 "  Fecha": "2026-02-15",
                 "NÚMERO": "ALUMNO-001",
@@ -64,8 +76,11 @@ def construir_global_prueba() -> pd.DataFrame:
 def prueba_lectura_y_separacion_de_conceptos() -> None:
     movimientos = normalizar_global(construir_global_prueba())
 
-    # Solo tres filas de tienda con pagos. El alumno queda fuera.
+    # Solo tres filas de tienda con pagos de 2026 en adelante.
+    # El alumno y el movimiento histórico de 2025 quedan fuera.
     assert len(movimientos) == 3
+    assert (pd.to_datetime(movimientos["FECHA"]).dt.year >= 2026).all()
+    assert "HIST-2025" not in set(movimientos["REFERENCIA_GLOBAL"])
 
     cjm = movimientos.loc[movimientos["CLAVE_PLANTEL"] == "CJM"].iloc[0]
     assert cjm["MATRICULA"] == "CJM9900001"
@@ -81,7 +96,7 @@ def prueba_lectura_y_separacion_de_conceptos() -> None:
     assert float(cjm["PAGO_CUOTA"]) != 99999.0
     assert float(cjm["PAGO_EE"]) != 99999.0
 
-    print("OK · Prueba 3A: GLOBAL filtra tiendas, obtiene clave por Matrícula y separa Cuota/EE.")
+    print("OK · Prueba 3A: GLOBAL filtra tiendas e histórico previo a 2026, obtiene clave por Matrícula y separa Cuota/EE.")
 
 
 def prueba_claves_no_reconocidas_no_se_descartan() -> None:

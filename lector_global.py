@@ -9,6 +9,7 @@ Reglas:
 - Considera registros cuyo Nombre(s) contenga "TIEND".
 - Incluye la excepción de PABELLON DE ARTEAGA, que corresponde a una tienda aunque
   su nombre no contiene la palabra "TIENDA".
+- Excluye movimientos con fecha anterior al 01/01/2026.
 - Obtiene CLAVE_PLANTEL de los primeros tres caracteres de Matrícula.
 - Suma exclusivamente las columnas cuyo encabezado contiene "CUOTA RECUPERACION".
 - Lee EE únicamente de "OTROS INGRESOS (ENERGIA ELEC)".
@@ -25,6 +26,10 @@ import pandas as pd
 
 HOJA_GLOBAL_POR_DEFECTO = "2024"
 FILA_ENCABEZADO_POR_DEFECTO = 1
+
+# Regla institucional: los reportes V3 nunca aplican movimientos anteriores a 2026.
+# El filtro usa FECHA, no SEMESTRE, porque FECHA identifica el año real del movimiento.
+ANIO_MINIMO_GLOBAL = 2026
 
 # Casos conocidos que sí corresponden a una tienda, aunque el texto no incluya TIEND.
 EXCEPCIONES_TIENDA_POR_NOMBRE = ("PABELLON DE ARTEAGA",)
@@ -63,6 +68,7 @@ def leer_global(
     archivo: str | Path,
     hoja: str = HOJA_GLOBAL_POR_DEFECTO,
     fila_encabezado: int = FILA_ENCABEZADO_POR_DEFECTO,
+    anio_minimo: int = ANIO_MINIMO_GLOBAL,
 ) -> pd.DataFrame:
     """Lee un GLOBAL de Excel y devuelve exclusivamente sus movimientos de tienda normalizados."""
     archivo = Path(archivo)
@@ -70,13 +76,23 @@ def leer_global(
         raise FileNotFoundError(f"No se encontró el archivo GLOBAL: {archivo}")
 
     global_df = pd.read_excel(archivo, sheet_name=hoja, header=fila_encabezado)
-    return normalizar_global(global_df)
+    return normalizar_global(global_df, anio_minimo=anio_minimo)
 
 
-def normalizar_global(global_df: pd.DataFrame) -> pd.DataFrame:
+def normalizar_global(
+    global_df: pd.DataFrame,
+    anio_minimo: int = ANIO_MINIMO_GLOBAL,
+) -> pd.DataFrame:
     """Convierte un DataFrame GLOBAL en movimientos de tienda estandarizados.
 
     Se expone por separado para permitir pruebas sin subir ni publicar un GLOBAL real.
+
+    Parámetros
+    ----------
+    anio_minimo:
+        Año mínimo aceptado según la fecha del movimiento. Por defecto es 2026.
+        Los registros anteriores se excluyen antes de validar Matrícula o importes,
+        para que el histórico no afecte ni bloquee el reporte actual.
     """
     columnas_salida = [
         "ID_MOVIMIENTO", "FECHA", "CLAVE_PLANTEL", "MATRICULA",
@@ -85,6 +101,9 @@ def normalizar_global(global_df: pd.DataFrame) -> pd.DataFrame:
 
     if global_df.empty:
         return pd.DataFrame(columns=columnas_salida)
+
+    if not isinstance(anio_minimo, int) or anio_minimo < 2000:
+        raise ValueError("anio_minimo debe ser un año válido, por ejemplo 2026.")
 
     columnas = list(global_df.columns)
     columna_fecha = _resolver_columna(columnas, "Fecha")
@@ -128,6 +147,13 @@ def normalizar_global(global_df: pd.DataFrame) -> pd.DataFrame:
     if tiendas["FECHA"].isna().any():
         filas = tiendas.index[tiendas["FECHA"].isna()].tolist()[:5]
         raise ValueError(f"Hay movimientos de tienda sin FECHA válida. Filas de GLOBAL: {filas}")
+
+    # El GLOBAL contiene histórico desde 2025. Se excluye antes de continuar con
+    # Matrícula e importes para que los movimientos anteriores nunca se apliquen
+    # al periodo administrado por la V3.
+    tiendas = tiendas.loc[tiendas["FECHA"].dt.year >= anio_minimo].copy()
+    if tiendas.empty:
+        return pd.DataFrame(columns=columnas_salida)
 
     tiendas["MATRICULA"] = tiendas[columna_matricula].fillna("").astype(str).str.strip().str.upper()
     tiendas["CLAVE_PLANTEL"] = tiendas["MATRICULA"].str[:3]
