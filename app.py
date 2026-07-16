@@ -23,7 +23,7 @@ from reportes_v3 import generar_reportes
 
 
 NOMBRE_APP = "Sistema de Control de Tiendas Escolares"
-VERSION_APP = "V3.1"
+VERSION_APP = "V3.1.1"
 BASE_DIR = Path(__file__).resolve().parent
 MACHOTE_OFICIAL = BASE_DIR / "datos" / "Machote_Tarifas_CECYTEA_V3.xlsx"
 LOGO = BASE_DIR / "logo_cecytea.png"
@@ -101,7 +101,7 @@ def procesar_archivos_subidos(archivo_global, archivo_machote) -> dict[str, Any]
             "planteles_activos": machote.planteles.copy(),
             "tarifas": machote.tarifas.copy(),
             "movimientos_leidos": movimientos.copy(),
-            "configuracion": machote.configuracion,
+            "configuracion": resultado["configuracion_periodo"],
         }
 
 
@@ -200,12 +200,16 @@ def _mostrar_resultados(datos: dict[str, Any]) -> None:
     no_reconocidos = resultado["movimientos_no_reconocidos"].copy()
     fuera_periodo = resultado.get("movimientos_fuera_periodo", pd.DataFrame()).copy()
     configuracion = datos["configuracion"]
+    periodo = str(configuracion.get("PERIODO", ""))
+    fecha_inicio = pd.Timestamp(configuracion["FECHA_INICIO_PAGOS"])
+    fecha_fin = pd.Timestamp(configuracion["FECHA_FIN_PAGOS"])
+    descripcion = str(configuracion.get("DESCRIPCION", periodo))
 
     st.info(
-        f"**Periodo detectado:** {configuracion.periodo} · "
-        f"**Rango de pagos:** {configuracion.fecha_inicio_pagos.strftime('%d/%m/%Y')} "
-        f"al {configuracion.fecha_fin_pagos.strftime('%d/%m/%Y')} · "
-        f"**Descripción:** {configuracion.descripcion}"
+        f"**Periodo detectado:** {periodo} · "
+        f"**Rango de pagos:** {fecha_inicio.strftime('%d/%m/%Y')} "
+        f"al {fecha_fin.strftime('%d/%m/%Y')} · "
+        f"**Descripción:** {descripcion}"
     )
 
     total_planteles = len(adeudos)
@@ -222,10 +226,11 @@ def _mostrar_resultados(datos: dict[str, Any]) -> None:
     c3.metric("Con adeudo", con_adeudo)
     c4.metric("Adeudo total", _dinero(adeudo_total))
 
+    dentro_periodo = len(resultado["movimientos_reconocidos"]) + len(no_reconocidos)
     c5, c6, c7, c8 = st.columns(4)
     c5.metric("Saldo a favor total", _dinero(saldo_favor))
     c6.metric("Movimientos leídos", len(datos["movimientos_leidos"]))
-    c7.metric("Dentro del periodo", len(resultado["movimientos_reconocidos"]))
+    c7.metric("Dentro del periodo", dentro_periodo)
     c8.metric("Fuera del periodo", len(fuera_periodo))
 
     st.caption(f"Meses tarifados ({len(meses)}): {', '.join(meses)}")
@@ -234,7 +239,7 @@ def _mostrar_resultados(datos: dict[str, Any]) -> None:
         st.success("Todos los movimientos leídos pertenecen al rango configurado.")
     else:
         st.warning(
-            f"Se excluyeron {len(fuera_periodo)} movimiento(s) por estar fuera del periodo {configuracion.periodo}. "
+            f"Se excluyeron {len(fuera_periodo)} movimiento(s) por estar fuera del periodo {periodo}. "
             "Quedaron disponibles en la hoja 'Fuera de Periodo' del reporte."
         )
         with st.expander("Ver movimientos fuera del periodo"):
@@ -285,6 +290,11 @@ def _mostrar_resultados(datos: dict[str, Any]) -> None:
 
 def main() -> None:
     _aplicar_estilos()
+
+    # Evita mostrar resultados conservados de una versión anterior de la app.
+    if st.session_state.get("_version_app_v3") != VERSION_APP:
+        st.session_state.pop("resultado_v3", None)
+        st.session_state["_version_app_v3"] = VERSION_APP
 
     with st.sidebar:
         if LOGO.exists():

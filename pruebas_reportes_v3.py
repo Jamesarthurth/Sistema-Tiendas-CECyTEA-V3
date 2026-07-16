@@ -9,7 +9,7 @@ from __future__ import annotations
 import pandas as pd
 
 from lector_global import normalizar_global
-from motor_v3 import MachoteV3
+from motor_v3 import ConfiguracionPeriodo, MachoteV3
 from procesador_v3 import procesar_periodo
 from reportes_v3 import generar_reportes
 
@@ -35,7 +35,14 @@ def crear_machote_prueba() -> MachoteV3:
             {"CLAVE_PLANTEL": "AST", "NOMBRE_PLANTEL": "CECyTEA Asientos", "SALDO_FAVOR_CUOTA": 0.0, "SALDO_FAVOR_EE": 0.0},
         ]
     )
-    return MachoteV3(planteles=planteles, tarifas=tarifas, saldos_iniciales=saldos)
+    return MachoteV3(
+        planteles=planteles,
+        tarifas=tarifas,
+        saldos_iniciales=saldos,
+        configuracion=ConfiguracionPeriodo(
+            "2026-1-PRUEBA", "2026-02-01", "2026-03-31", "Febrero-Marzo 2026"
+        ),
+    )
 
 
 def crear_global_prueba() -> pd.DataFrame:

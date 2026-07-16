@@ -109,6 +109,10 @@ def prueba_pago_anticipado_y_saldo_a_favor(machote) -> None:
 
 def main() -> None:
     machote = cargar_machote(ARCHIVO_MACHOTE)
+    assert machote.periodo == "2026-1"
+    assert machote.fecha_inicio_pagos == pd.Timestamp("2026-02-01")
+    assert machote.fecha_fin_pagos == pd.Timestamp("2026-06-30")
+    print("OK · Configuración del periodo leída desde el machote.")
 
     prueba_pagos_parciales(machote)
     prueba_pago_anticipado_y_saldo_a_favor(machote)

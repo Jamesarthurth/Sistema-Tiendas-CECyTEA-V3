@@ -10,7 +10,7 @@ from openpyxl import load_workbook
 
 from exportador_excel_v3 import exportar_excel_v3
 from lector_global import normalizar_global
-from motor_v3 import MachoteV3
+from motor_v3 import ConfiguracionPeriodo, MachoteV3
 from procesador_v3 import procesar_periodo
 
 
@@ -29,7 +29,14 @@ def crear_machote_prueba() -> MachoteV3:
         {"CLAVE_PLANTEL": "CJM", "NOMBRE_PLANTEL": "CECyTEA Jesús María", "SALDO_FAVOR_CUOTA": 0.0, "SALDO_FAVOR_EE": 0.0},
         {"CLAVE_PLANTEL": "AST", "NOMBRE_PLANTEL": "CECyTEA Asientos", "SALDO_FAVOR_CUOTA": 0.0, "SALDO_FAVOR_EE": 0.0},
     ])
-    return MachoteV3(planteles=planteles, tarifas=tarifas, saldos_iniciales=saldos)
+    return MachoteV3(
+        planteles=planteles,
+        tarifas=tarifas,
+        saldos_iniciales=saldos,
+        configuracion=ConfiguracionPeriodo(
+            "2026-1-PRUEBA", "2026-02-01", "2026-03-31", "Febrero-Marzo 2026"
+        ),
+    )
 
 
 def crear_global_prueba() -> pd.DataFrame:
@@ -41,6 +48,14 @@ def crear_global_prueba() -> pd.DataFrame:
             "Nombre(s)": "CECYTEA TIENDA ESCOLAR",
             "CUOTA RECUPERACION": 1500.0,
             "OTROS INGRESOS (ENERGIA ELEC)": 150.0,
+        },
+        {
+            "  Fecha": "2026-04-02",
+            "NÚMERO": "REC-FUERA",
+            "Matrícula": "CJM9900001",
+            "Nombre(s)": "CECYTEA TIENDA ESCOLAR",
+            "CUOTA RECUPERACION": 5000.0,
+            "OTROS INGRESOS (ENERGIA ELEC)": 500.0,
         },
         {
             "  Fecha": "2026-02-11",
@@ -69,6 +84,7 @@ def main() -> None:
             "Detalle de Cobranza",
             "Trazabilidad",
             "Movimientos por Revisar",
+            "Fuera de Periodo",
         }
         assert esperadas.issubset(set(libro.sheetnames))
 
@@ -89,9 +105,13 @@ def main() -> None:
         revisar = libro["Movimientos por Revisar"]
         assert revisar.max_row == 2  # encabezado + clave XYZ
 
+        fuera = libro["Fuera de Periodo"]
+        assert fuera.max_row == 2  # encabezado + REC-FUERA
+
     print("OK · Prueba 6: se genera un Excel final con las hojas administrativas requeridas.")
     print("OK · Prueba 6: Detalle de Cobranza conserva su estructura como fuente de verdad.")
     print("OK · Prueba 6: movimientos fuera del catálogo quedan visibles para revisión.")
+    print("OK · Prueba 6: movimientos fuera del periodo se exportan en hoja separada.")
     print("\nPRUEBAS DE EXPORTACIÓN EXCEL SUPERADAS.\n")
 
 

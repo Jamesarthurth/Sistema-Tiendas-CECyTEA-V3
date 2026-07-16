@@ -1,14 +1,14 @@
 """Motor de cálculo V3 para el Sistema de Tiendas Escolares CECyTEA.
 
-Este archivo no depende de Streamlit. Su única función es leer el machote V3 y
-aplicar pagos de Cuota y EE por separado mediante FIFO.
+Este archivo no depende de Streamlit. Lee el machote V3, valida su configuración
+de periodo y aplica pagos de Cuota y EE por separado mediante FIFO.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 import pandas as pd
 
@@ -26,30 +26,100 @@ class ConfiguracionPeriodo:
     fecha_fin_pagos: pd.Timestamp
     descripcion: str
 
+    def __post_init__(self) -> None:
+        periodo = str(self.periodo or "").strip()
+        inicio = pd.to_datetime(self.fecha_inicio_pagos, errors="coerce")
+        fin = pd.to_datetime(self.fecha_fin_pagos, errors="coerce")
+        descripcion = str(self.descripcion or periodo).strip()
+
+        if not periodo:
+            raise ValueError("El periodo no puede estar vacío.")
+        if pd.isna(inicio) or pd.isna(fin):
+            raise ValueError("Las fechas de inicio y fin del periodo deben ser válidas.")
+
+        inicio = pd.Timestamp(inicio).normalize()
+        fin = pd.Timestamp(fin).normalize()
+        if inicio > fin:
+            raise ValueError("La fecha inicial del periodo no puede ser posterior a la fecha final.")
+
+        object.__setattr__(self, "periodo", periodo)
+        object.__setattr__(self, "fecha_inicio_pagos", inicio)
+        object.__setattr__(self, "fecha_fin_pagos", fin)
+        object.__setattr__(self, "descripcion", descripcion or periodo)
+
+    @classmethod
+    def desde_tarifas(cls, tarifas: pd.DataFrame) -> "ConfiguracionPeriodo":
+        """Crea una configuración compatible para pruebas o machotes antiguos."""
+        if tarifas is None or tarifas.empty or "MES" not in tarifas.columns:
+            raise ValueError("No se puede derivar el periodo porque no hay tarifas con MES.")
+
+        meses = pd.to_datetime(tarifas["MES"], errors="coerce")
+        if meses.isna().any():
+            raise ValueError("No se puede derivar el periodo porque hay meses inválidos en TARIFAS.")
+
+        primer_mes = pd.Timestamp(meses.min()).to_period("M").to_timestamp()
+        ultimo_mes = pd.Timestamp(meses.max()).to_period("M").to_timestamp()
+        fecha_fin = (ultimo_mes + pd.offsets.MonthEnd(0)).normalize()
+        return cls(
+            periodo=f"{primer_mes.year}-AUTO",
+            fecha_inicio_pagos=primer_mes,
+            fecha_fin_pagos=fecha_fin,
+            descripcion="Periodo derivado automáticamente de TARIFAS",
+        )
+
 
 @dataclass
 class MachoteV3:
-    """Datos normalizados del machote de tarifas V3."""
+    """Datos normalizados del machote de tarifas V3.
+
+    ``configuracion`` es opcional únicamente para mantener compatibles las
+    pruebas históricas que construyen el objeto directamente en memoria. Cuando
+    no se proporciona, se deriva del primer y último mes de TARIFAS.
+    """
 
     planteles: pd.DataFrame
     tarifas: pd.DataFrame
     saldos_iniciales: pd.DataFrame
-    configuracion: ConfiguracionPeriodo
+    configuracion: ConfiguracionPeriodo | Mapping[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        if self.configuracion is None:
+            self.configuracion = ConfiguracionPeriodo.desde_tarifas(self.tarifas)
+        elif isinstance(self.configuracion, Mapping):
+            valores = self.configuracion
+            self.configuracion = ConfiguracionPeriodo(
+                periodo=valores.get("PERIODO", valores.get("periodo", "")),
+                fecha_inicio_pagos=valores.get(
+                    "FECHA_INICIO_PAGOS", valores.get("fecha_inicio_pagos")
+                ),
+                fecha_fin_pagos=valores.get(
+                    "FECHA_FIN_PAGOS", valores.get("fecha_fin_pagos")
+                ),
+                descripcion=valores.get(
+                    "DESCRIPCION", valores.get("descripcion", "")
+                ),
+            )
+        elif not isinstance(self.configuracion, ConfiguracionPeriodo):
+            raise TypeError("configuracion debe ser ConfiguracionPeriodo, un diccionario o None.")
 
     @property
     def periodo(self) -> str:
+        assert isinstance(self.configuracion, ConfiguracionPeriodo)
         return self.configuracion.periodo
 
     @property
     def fecha_inicio_pagos(self) -> pd.Timestamp:
+        assert isinstance(self.configuracion, ConfiguracionPeriodo)
         return self.configuracion.fecha_inicio_pagos
 
     @property
     def fecha_fin_pagos(self) -> pd.Timestamp:
+        assert isinstance(self.configuracion, ConfiguracionPeriodo)
         return self.configuracion.fecha_fin_pagos
 
     @property
     def descripcion_periodo(self) -> str:
+        assert isinstance(self.configuracion, ConfiguracionPeriodo)
         return self.configuracion.descripcion
 
 
@@ -57,7 +127,7 @@ def _normalizar_columna(valor: Any) -> str:
     """Convierte encabezados a un formato uniforme y seguro para comparar."""
     if pd.isna(valor):
         return ""
-    return str(valor).strip().upper().replace("\n", " ")
+    return " ".join(str(valor).strip().upper().replace("\n", " ").split())
 
 
 def _leer_hoja_con_encabezado(
@@ -65,7 +135,7 @@ def _leer_hoja_con_encabezado(
     hoja: str,
     columnas_requeridas: Iterable[str],
 ) -> pd.DataFrame:
-    """Busca automáticamente la fila de encabezados dentro de una hoja del machote."""
+    """Busca automáticamente la fila de encabezados dentro de una hoja."""
     vista = pd.read_excel(archivo, sheet_name=hoja, header=None)
     requeridas = {_normalizar_columna(col) for col in columnas_requeridas}
 
@@ -83,8 +153,7 @@ def _leer_hoja_con_encabezado(
 
     datos = pd.read_excel(archivo, sheet_name=hoja, header=fila_encabezado)
     datos.columns = [_normalizar_columna(col) for col in datos.columns]
-    datos = datos.dropna(how="all").copy()
-    return datos
+    return datos.dropna(how="all").copy()
 
 
 def _a_numero(serie: pd.Series, nombre: str) -> pd.Series:
@@ -98,14 +167,17 @@ def _a_numero(serie: pd.Series, nombre: str) -> pd.Series:
 
 
 def _leer_configuracion_periodo(archivo: str | Path) -> ConfiguracionPeriodo | None:
-    """Lee la hoja CONFIGURACION. Devuelve None para machotes V3 antiguos."""
-    try:
-        config = _leer_hoja_con_encabezado(archivo, "CONFIGURACION", ["CAMPO", "VALOR"])
-    except (ValueError, KeyError):
+    """Lee CONFIGURACION; devuelve None solamente si la hoja no existe."""
+    libro = pd.ExcelFile(archivo)
+    nombres = {_normalizar_columna(nombre): nombre for nombre in libro.sheet_names}
+    if "CONFIGURACION" not in nombres:
         return None
 
+    hoja_real = nombres["CONFIGURACION"]
+    config = _leer_hoja_con_encabezado(archivo, hoja_real, ["CAMPO", "VALOR"])
     config["CAMPO"] = config["CAMPO"].map(_normalizar_columna)
     config = config[config["CAMPO"] != ""].copy()
+
     if config["CAMPO"].duplicated().any():
         repetidos = config.loc[config["CAMPO"].duplicated(keep=False), "CAMPO"].tolist()
         raise ValueError(f"La hoja CONFIGURACION contiene campos repetidos: {repetidos}")
@@ -116,56 +188,44 @@ def _leer_configuracion_periodo(archivo: str | Path) -> ConfiguracionPeriodo | N
     if faltantes:
         raise ValueError(f"Faltan campos obligatorios en CONFIGURACION: {faltantes}")
 
-    periodo = str(valores["PERIODO"]).strip()
-    if not periodo:
-        raise ValueError("PERIODO no puede quedar vacío en CONFIGURACION.")
-
-    fecha_inicio = pd.to_datetime(valores["FECHA_INICIO_PAGOS"], errors="coerce")
-    fecha_fin = pd.to_datetime(valores["FECHA_FIN_PAGOS"], errors="coerce")
-    if pd.isna(fecha_inicio) or pd.isna(fecha_fin):
-        raise ValueError("FECHA_INICIO_PAGOS y FECHA_FIN_PAGOS deben ser fechas válidas.")
-
-    fecha_inicio = pd.Timestamp(fecha_inicio).normalize()
-    fecha_fin = pd.Timestamp(fecha_fin).normalize()
-    if fecha_inicio > fecha_fin:
-        raise ValueError("FECHA_INICIO_PAGOS no puede ser posterior a FECHA_FIN_PAGOS.")
-
-    descripcion = str(valores.get("DESCRIPCION", periodo) or periodo).strip()
-    return ConfiguracionPeriodo(periodo, fecha_inicio, fecha_fin, descripcion)
+    return ConfiguracionPeriodo(
+        periodo=valores["PERIODO"],
+        fecha_inicio_pagos=valores["FECHA_INICIO_PAGOS"],
+        fecha_fin_pagos=valores["FECHA_FIN_PAGOS"],
+        descripcion=valores.get("DESCRIPCION", valores["PERIODO"]),
+    )
 
 
 def cargar_machote(archivo: str | Path) -> MachoteV3:
-    """Lee, valida y normaliza el machote V3.
-
-    Reglas principales:
-    - Solo los planteles con ESTATUS_TIENDA = ACTIVA participan en cálculos.
-    - Tarifas se capturan en una fila por plantel y por mes.
-    - Cuota, EE y saldos a favor nunca se mezclan.
-    """
+    """Lee, valida y normaliza el machote V3."""
     archivo = Path(archivo)
     if not archivo.exists():
         raise FileNotFoundError(f"No se encontró el machote: {archivo}")
 
     planteles = _leer_hoja_con_encabezado(
-        archivo,
-        "PLANTELES",
-        ["CLAVE_PLANTEL", "NOMBRE_PLANTEL"],
+        archivo, "PLANTELES", ["CLAVE_PLANTEL", "NOMBRE_PLANTEL"]
     )
 
     if "ESTATUS_TIENDA" not in planteles.columns:
-        # Compatibilidad con un machote temprano que aún usaba ACTIVO.
         if "ACTIVO" in planteles.columns:
             planteles["ESTATUS_TIENDA"] = planteles["ACTIVO"].map(
-                lambda valor: "ACTIVA" if _normalizar_columna(valor) in {"SI", "ACTIVO", "ACTIVA"} else "SIN TIENDA"
+                lambda valor: "ACTIVA"
+                if _normalizar_columna(valor) in {"SI", "ACTIVO", "ACTIVA"}
+                else "SIN TIENDA"
             )
         else:
-            raise ValueError("La hoja PLANTELES debe incluir la columna ESTATUS_TIENDA.")
+            raise ValueError("La hoja PLANTELES debe incluir ESTATUS_TIENDA.")
 
-    planteles["CLAVE_PLANTEL"] = planteles["CLAVE_PLANTEL"].fillna("").astype(str).str.strip().str.upper()
-    planteles["NOMBRE_PLANTEL"] = planteles["NOMBRE_PLANTEL"].fillna("").astype(str).str.strip()
-    planteles["ESTATUS_TIENDA"] = planteles["ESTATUS_TIENDA"].map(_normalizar_columna)
+    planteles["CLAVE_PLANTEL"] = (
+        planteles["CLAVE_PLANTEL"].fillna("").astype(str).str.strip().str.upper()
+    )
+    planteles["NOMBRE_PLANTEL"] = (
+        planteles["NOMBRE_PLANTEL"].fillna("").astype(str).str.strip()
+    )
+    planteles["ESTATUS_TIENDA"] = planteles["ESTATUS_TIENDA"].map(
+        _normalizar_columna
+    )
 
-    # Un plantel sin tienda puede no tener clave; uno activo sí debe tenerla.
     activos_sin_clave = planteles[
         planteles["ESTATUS_TIENDA"].isin(ESTATUS_ACTIVOS)
         & (planteles["CLAVE_PLANTEL"] == "")
@@ -181,22 +241,26 @@ def cargar_machote(archivo: str | Path) -> MachoteV3:
     duplicadas = activos["CLAVE_PLANTEL"].duplicated(keep=False)
     if duplicadas.any():
         claves = activos.loc[duplicadas, "CLAVE_PLANTEL"].tolist()
-        raise ValueError(f"Hay claves de plantel duplicadas entre planteles activos: {claves}")
+        raise ValueError(f"Hay claves duplicadas entre planteles activos: {claves}")
 
     tarifas = _leer_hoja_con_encabezado(
-        archivo,
-        "TARIFAS",
-        ["CLAVE_PLANTEL", "MES", "CUOTA", "EE"],
+        archivo, "TARIFAS", ["CLAVE_PLANTEL", "MES", "CUOTA", "EE"]
     )
-    tarifas["CLAVE_PLANTEL"] = tarifas["CLAVE_PLANTEL"].fillna("").astype(str).str.strip().str.upper()
-    tarifas["MES"] = pd.to_datetime(tarifas["MES"], errors="coerce").dt.to_period("M").dt.to_timestamp()
+    tarifas["CLAVE_PLANTEL"] = (
+        tarifas["CLAVE_PLANTEL"].fillna("").astype(str).str.strip().str.upper()
+    )
+    tarifas["MES"] = (
+        pd.to_datetime(tarifas["MES"], errors="coerce")
+        .dt.to_period("M")
+        .dt.to_timestamp()
+    )
     tarifas["CUOTA"] = _a_numero(tarifas["CUOTA"], "CUOTA")
     tarifas["EE"] = _a_numero(tarifas["EE"], "EE")
-
     tarifas = tarifas[tarifas["CLAVE_PLANTEL"] != ""].copy()
+
     if tarifas["MES"].isna().any():
         ejemplos = tarifas.loc[tarifas["MES"].isna(), "CLAVE_PLANTEL"].head(5).tolist()
-        raise ValueError(f"Hay tarifas sin MES válido. Claves involucradas: {ejemplos}")
+        raise ValueError(f"Hay tarifas sin MES válido. Claves: {ejemplos}")
     if (tarifas[["CUOTA", "EE"]] < 0).any().any():
         raise ValueError("Las tarifas no pueden tener montos negativos.")
 
@@ -206,22 +270,29 @@ def cargar_machote(archivo: str | Path) -> MachoteV3:
         how="inner",
         suffixes=("", "_CATALOGO"),
     )
-    tarifas["NOMBRE_PLANTEL"] = tarifas["NOMBRE_PLANTEL_CATALOGO"].fillna(tarifas.get("NOMBRE_PLANTEL", ""))
-    columnas_eliminar = [col for col in ["NOMBRE_PLANTEL_CATALOGO"] if col in tarifas.columns]
-    tarifas = tarifas.drop(columns=columnas_eliminar)
+    tarifas["NOMBRE_PLANTEL"] = tarifas["NOMBRE_PLANTEL_CATALOGO"].fillna(
+        tarifas.get("NOMBRE_PLANTEL", "")
+    )
+    tarifas = tarifas.drop(columns=["NOMBRE_PLANTEL_CATALOGO"])
 
     if tarifas.empty:
-        raise ValueError("No se encontraron tarifas para los planteles ACTIVOS.")
+        raise ValueError("No se encontraron tarifas para planteles ACTIVOS.")
 
-    duplicadas_tarifa = tarifas.duplicated(subset=["CLAVE_PLANTEL", "MES"], keep=False)
+    duplicadas_tarifa = tarifas.duplicated(
+        subset=["CLAVE_PLANTEL", "MES"], keep=False
+    )
     if duplicadas_tarifa.any():
-        ejemplos = tarifas.loc[duplicadas_tarifa, ["CLAVE_PLANTEL", "MES"]].head(10).to_dict("records")
-        raise ValueError(f"Hay tarifas duplicadas para el mismo plantel y mes: {ejemplos}")
+        ejemplos = tarifas.loc[
+            duplicadas_tarifa, ["CLAVE_PLANTEL", "MES"]
+        ].head(10).to_dict("records")
+        raise ValueError(f"Hay tarifas duplicadas por plantel y mes: {ejemplos}")
 
     claves_con_tarifa = set(tarifas["CLAVE_PLANTEL"])
-    activos_sin_tarifa = activos.loc[~activos["CLAVE_PLANTEL"].isin(claves_con_tarifa), "NOMBRE_PLANTEL"].tolist()
+    activos_sin_tarifa = activos.loc[
+        ~activos["CLAVE_PLANTEL"].isin(claves_con_tarifa), "NOMBRE_PLANTEL"
+    ].tolist()
     if activos_sin_tarifa:
-        raise ValueError(f"Hay planteles ACTIVOS sin tarifas capturadas: {activos_sin_tarifa}")
+        raise ValueError(f"Hay planteles ACTIVOS sin tarifas: {activos_sin_tarifa}")
 
     try:
         saldos = _leer_hoja_con_encabezado(
@@ -229,11 +300,14 @@ def cargar_machote(archivo: str | Path) -> MachoteV3:
             "SALDOS_INICIALES",
             ["CLAVE_PLANTEL", "SALDO_FAVOR_CUOTA", "SALDO_FAVOR_EE"],
         )
-    except ValueError:
-        # No bloquea pruebas iniciales si en el futuro se crea un machote sin la hoja.
-        saldos = pd.DataFrame(columns=["CLAVE_PLANTEL", "SALDO_FAVOR_CUOTA", "SALDO_FAVOR_EE"])
+    except (ValueError, KeyError):
+        saldos = pd.DataFrame(
+            columns=["CLAVE_PLANTEL", "SALDO_FAVOR_CUOTA", "SALDO_FAVOR_EE"]
+        )
 
-    saldos["CLAVE_PLANTEL"] = saldos["CLAVE_PLANTEL"].fillna("").astype(str).str.strip().str.upper()
+    saldos["CLAVE_PLANTEL"] = (
+        saldos["CLAVE_PLANTEL"].fillna("").astype(str).str.strip().str.upper()
+    )
     saldos = saldos[saldos["CLAVE_PLANTEL"] != ""].copy()
     for columna in ["SALDO_FAVOR_CUOTA", "SALDO_FAVOR_EE"]:
         if columna not in saldos.columns:
@@ -242,44 +316,39 @@ def cargar_machote(archivo: str | Path) -> MachoteV3:
 
     if (saldos[["SALDO_FAVOR_CUOTA", "SALDO_FAVOR_EE"]] < 0).any().any():
         raise ValueError("Los saldos a favor no pueden ser negativos.")
-
     if saldos["CLAVE_PLANTEL"].duplicated().any():
-        claves = saldos.loc[saldos["CLAVE_PLANTEL"].duplicated(keep=False), "CLAVE_PLANTEL"].tolist()
-        raise ValueError(f"Hay saldos iniciales repetidos para estas claves: {claves}")
+        claves = saldos.loc[
+            saldos["CLAVE_PLANTEL"].duplicated(keep=False), "CLAVE_PLANTEL"
+        ].tolist()
+        raise ValueError(f"Hay saldos iniciales repetidos para: {claves}")
 
     saldos = activos[["CLAVE_PLANTEL", "NOMBRE_PLANTEL"]].merge(
         saldos[["CLAVE_PLANTEL", "SALDO_FAVOR_CUOTA", "SALDO_FAVOR_EE"]],
         on="CLAVE_PLANTEL",
         how="left",
     )
-    saldos[["SALDO_FAVOR_CUOTA", "SALDO_FAVOR_EE"]] = saldos[["SALDO_FAVOR_CUOTA", "SALDO_FAVOR_EE"]].fillna(0.0)
+    saldos[["SALDO_FAVOR_CUOTA", "SALDO_FAVOR_EE"]] = saldos[
+        ["SALDO_FAVOR_CUOTA", "SALDO_FAVOR_EE"]
+    ].fillna(0.0)
 
-    tarifas = tarifas[["CLAVE_PLANTEL", "NOMBRE_PLANTEL", "MES", "CUOTA", "EE"]].sort_values(
-        ["CLAVE_PLANTEL", "MES"]
-    ).reset_index(drop=True)
-    activos = activos[["CLAVE_PLANTEL", "NOMBRE_PLANTEL", "ESTATUS_TIENDA"]].sort_values("CLAVE_PLANTEL").reset_index(drop=True)
+    tarifas = tarifas[
+        ["CLAVE_PLANTEL", "NOMBRE_PLANTEL", "MES", "CUOTA", "EE"]
+    ].sort_values(["CLAVE_PLANTEL", "MES"]).reset_index(drop=True)
+    activos = activos[
+        ["CLAVE_PLANTEL", "NOMBRE_PLANTEL", "ESTATUS_TIENDA"]
+    ].sort_values("CLAVE_PLANTEL").reset_index(drop=True)
 
     configuracion = _leer_configuracion_periodo(archivo)
     if configuracion is None:
-        # Compatibilidad con machotes anteriores: el rango se deriva de TARIFAS.
-        primer_mes = pd.Timestamp(tarifas["MES"].min()).normalize()
-        ultimo_mes = pd.Timestamp(tarifas["MES"].max())
-        fin_mes = (ultimo_mes + pd.offsets.MonthEnd(0)).normalize()
-        configuracion = ConfiguracionPeriodo(
-            periodo=f"{primer_mes.year}-AUTO",
-            fecha_inicio_pagos=primer_mes,
-            fecha_fin_pagos=fin_mes,
-            descripcion="Periodo derivado automáticamente de TARIFAS",
-        )
+        configuracion = ConfiguracionPeriodo.desde_tarifas(tarifas)
 
-    meses_fuera = tarifas[
-        (tarifas["MES"] < configuracion.fecha_inicio_pagos.to_period("M").to_timestamp())
-        | (tarifas["MES"] > configuracion.fecha_fin_pagos.to_period("M").to_timestamp())
-    ]
+    mes_inicio = configuracion.fecha_inicio_pagos.to_period("M").to_timestamp()
+    mes_fin = configuracion.fecha_fin_pagos.to_period("M").to_timestamp()
+    meses_fuera = tarifas[(tarifas["MES"] < mes_inicio) | (tarifas["MES"] > mes_fin)]
     if not meses_fuera.empty:
         ejemplos = meses_fuera[["CLAVE_PLANTEL", "MES"]].head(10).to_dict("records")
         raise ValueError(
-            "Hay meses en TARIFAS fuera del rango definido en CONFIGURACION. "
+            "Hay meses en TARIFAS fuera del rango de CONFIGURACION. "
             f"Ejemplos: {ejemplos}"
         )
 
@@ -292,20 +361,28 @@ def cargar_machote(archivo: str | Path) -> MachoteV3:
 
 
 def _normalizar_pagos(pagos: pd.DataFrame | list[dict[str, Any]]) -> pd.DataFrame:
-    """Acepta pagos de prueba o pagos que luego vendrán de GLOBAL."""
+    """Acepta pagos de prueba o pagos que vienen de GLOBAL."""
     pagos_df = pd.DataFrame(pagos).copy()
     if pagos_df.empty:
-        return pd.DataFrame(columns=["ID_MOVIMIENTO", "FECHA", "PAGO_CUOTA", "PAGO_EE"])
+        return pd.DataFrame(
+            columns=["ID_MOVIMIENTO", "FECHA", "PAGO_CUOTA", "PAGO_EE"]
+        )
 
     requeridas = {"FECHA", "PAGO_CUOTA", "PAGO_EE"}
     columnas = {_normalizar_columna(col): col for col in pagos_df.columns}
     faltantes = requeridas.difference(columnas)
     if faltantes:
-        raise ValueError(f"Los pagos deben tener estas columnas: {sorted(requeridas)}. Faltan: {sorted(faltantes)}")
+        raise ValueError(
+            f"Los pagos deben tener {sorted(requeridas)}. Faltan: {sorted(faltantes)}"
+        )
 
-    pagos_df = pagos_df.rename(columns={original: normalizada for normalizada, original in columnas.items()})
+    pagos_df = pagos_df.rename(
+        columns={original: normalizada for normalizada, original in columnas.items()}
+    )
     if "ID_MOVIMIENTO" not in pagos_df.columns:
-        pagos_df["ID_MOVIMIENTO"] = [f"MOV-{indice:04d}" for indice in range(1, len(pagos_df) + 1)]
+        pagos_df["ID_MOVIMIENTO"] = [
+            f"MOV-{indice:04d}" for indice in range(1, len(pagos_df) + 1)
+        ]
 
     pagos_df["FECHA"] = pd.to_datetime(pagos_df["FECHA"], errors="coerce")
     if pagos_df["FECHA"].isna().any():
@@ -313,13 +390,12 @@ def _normalizar_pagos(pagos: pd.DataFrame | list[dict[str, Any]]) -> pd.DataFram
 
     pagos_df["PAGO_CUOTA"] = _a_numero(pagos_df["PAGO_CUOTA"], "PAGO_CUOTA")
     pagos_df["PAGO_EE"] = _a_numero(pagos_df["PAGO_EE"], "PAGO_EE")
-
     if (pagos_df[["PAGO_CUOTA", "PAGO_EE"]] < 0).any().any():
         raise ValueError("No se permiten pagos negativos.")
 
-    return pagos_df[["ID_MOVIMIENTO", "FECHA", "PAGO_CUOTA", "PAGO_EE"]].sort_values(
-        ["FECHA", "ID_MOVIMIENTO"]
-    ).reset_index(drop=True)
+    return pagos_df[
+        ["ID_MOVIMIENTO", "FECHA", "PAGO_CUOTA", "PAGO_EE"]
+    ].sort_values(["FECHA", "ID_MOVIMIENTO"]).reset_index(drop=True)
 
 
 def _estado(esperado: float, pagado: float) -> str:
@@ -339,17 +415,10 @@ def aplicar_fifo_por_concepto(
     concepto: str,
     saldo_inicial: float = 0.0,
 ) -> tuple[pd.DataFrame, pd.DataFrame, float]:
-    """Aplica saldo inicial y pagos a un concepto mediante FIFO.
-
-    Regresa:
-    1. Estado por mes.
-    2. Trazabilidad de cada monto aplicado.
-    3. Saldo a favor final para ese concepto.
-    """
+    """Aplica saldo inicial y pagos a un concepto mediante FIFO."""
     concepto = _normalizar_columna(concepto)
     if concepto not in CONCEPTOS:
         raise ValueError(f"Concepto no válido: {concepto}. Usa CUOTA o EE.")
-
     if tarifas_plantel.empty:
         raise ValueError("No hay tarifas para procesar.")
 
@@ -357,7 +426,9 @@ def aplicar_fifo_por_concepto(
     nombre = str(tarifas_plantel.iloc[0]["NOMBRE_PLANTEL"])
     columna_pago = f"PAGO_{concepto}"
 
-    estado = tarifas_plantel[["CLAVE_PLANTEL", "NOMBRE_PLANTEL", "MES", concepto]].copy()
+    estado = tarifas_plantel[
+        ["CLAVE_PLANTEL", "NOMBRE_PLANTEL", "MES", concepto]
+    ].copy()
     estado = estado.rename(columns={concepto: "ESPERADO"})
     estado["ESPERADO"] = estado["ESPERADO"].astype(float)
     estado["PAGADO"] = 0.0
@@ -367,7 +438,12 @@ def aplicar_fifo_por_concepto(
 
     trazas: list[dict[str, Any]] = []
 
-    def aplicar_monto(monto: float, fecha: pd.Timestamp | pd.NaT, origen: str, id_movimiento: str) -> float:
+    def aplicar_monto(
+        monto: float,
+        fecha: pd.Timestamp | pd.NaT,
+        origen: str,
+        id_movimiento: str,
+    ) -> float:
         restante = float(monto)
         for indice in estado.index:
             pendiente = float(estado.at[indice, "PENDIENTE"])
@@ -377,7 +453,9 @@ def aplicar_fifo_por_concepto(
                 continue
 
             aplicado = min(restante, pendiente)
-            estado.at[indice, "PAGADO"] = float(estado.at[indice, "PAGADO"]) + aplicado
+            estado.at[indice, "PAGADO"] = (
+                float(estado.at[indice, "PAGADO"]) + aplicado
+            )
             estado.at[indice, "PENDIENTE"] = max(pendiente - aplicado, 0.0)
             if pd.notna(fecha):
                 estado.at[indice, "FECHA_ULTIMO_ABONO"] = fecha
@@ -400,7 +478,9 @@ def aplicar_fifo_por_concepto(
     saldo_inicial = float(saldo_inicial or 0.0)
     if saldo_inicial < -TOLERANCIA:
         raise ValueError("El saldo inicial no puede ser negativo.")
-    saldo_a_favor = aplicar_monto(saldo_inicial, pd.NaT, "SALDO_INICIAL", "SALDO-INICIAL")
+    saldo_a_favor = aplicar_monto(
+        saldo_inicial, pd.NaT, "SALDO_INICIAL", "SALDO-INICIAL"
+    )
 
     pagos_df = _normalizar_pagos(pagos)
     for _, pago in pagos_df.iterrows():
@@ -415,7 +495,10 @@ def aplicar_fifo_por_concepto(
         )
 
     estado["PENDIENTE"] = estado["PENDIENTE"].clip(lower=0.0)
-    estado["ESTADO"] = estado.apply(lambda fila: _estado(float(fila["ESPERADO"]), float(fila["PAGADO"])), axis=1)
+    estado["ESTADO"] = estado.apply(
+        lambda fila: _estado(float(fila["ESPERADO"]), float(fila["PAGADO"])),
+        axis=1,
+    )
     estado.insert(3, "CONCEPTO", concepto)
     estado = estado[
         [
@@ -444,7 +527,6 @@ def aplicar_fifo_por_concepto(
             "MONTO_APLICADO",
         ],
     )
-
     return estado, trazabilidad, float(saldo_a_favor)
 
 
@@ -457,44 +539,52 @@ def procesar_plantel(
     clave = str(clave_plantel).strip().upper()
     plantel = machote.planteles[machote.planteles["CLAVE_PLANTEL"] == clave]
     if plantel.empty:
-        raise ValueError(f"La clave '{clave}' no corresponde a un plantel ACTIVO del machote.")
+        raise ValueError(
+            f"La clave '{clave}' no corresponde a un plantel ACTIVO del machote."
+        )
 
-    tarifas_plantel = machote.tarifas[machote.tarifas["CLAVE_PLANTEL"] == clave].copy()
+    tarifas_plantel = machote.tarifas[
+        machote.tarifas["CLAVE_PLANTEL"] == clave
+    ].copy()
     if tarifas_plantel.empty:
         raise ValueError(f"El plantel {clave} no tiene tarifas capturadas.")
 
-    saldo = machote.saldos_iniciales[machote.saldos_iniciales["CLAVE_PLANTEL"] == clave]
-    saldo_cuota = float(saldo.iloc[0]["SALDO_FAVOR_CUOTA"]) if not saldo.empty else 0.0
+    saldo = machote.saldos_iniciales[
+        machote.saldos_iniciales["CLAVE_PLANTEL"] == clave
+    ]
+    saldo_cuota = (
+        float(saldo.iloc[0]["SALDO_FAVOR_CUOTA"]) if not saldo.empty else 0.0
+    )
     saldo_ee = float(saldo.iloc[0]["SALDO_FAVOR_EE"]) if not saldo.empty else 0.0
 
     estado_cuota, traza_cuota, saldo_final_cuota = aplicar_fifo_por_concepto(
-        tarifas_plantel=tarifas_plantel,
-        pagos=pagos,
-        concepto="CUOTA",
-        saldo_inicial=saldo_cuota,
+        tarifas_plantel, pagos, "CUOTA", saldo_cuota
     )
     estado_ee, traza_ee, saldo_final_ee = aplicar_fifo_por_concepto(
-        tarifas_plantel=tarifas_plantel,
-        pagos=pagos,
-        concepto="EE",
-        saldo_inicial=saldo_ee,
+        tarifas_plantel, pagos, "EE", saldo_ee
     )
 
     estado = pd.concat([estado_cuota, estado_ee], ignore_index=True).sort_values(
         ["MES", "CONCEPTO"]
     ).reset_index(drop=True)
-    trazabilidad = pd.concat([traza_cuota, traza_ee], ignore_index=True)
+    trazas_no_vacias = [traza for traza in (traza_cuota, traza_ee) if not traza.empty]
+    trazabilidad = (
+        pd.concat(trazas_no_vacias, ignore_index=True)
+        if trazas_no_vacias
+        else pd.DataFrame(columns=traza_cuota.columns)
+    )
 
     resumen = {
         "CLAVE_PLANTEL": clave,
         "NOMBRE_PLANTEL": plantel.iloc[0]["NOMBRE_PLANTEL"],
         "ADEUDO_CUOTA": float(estado_cuota["PENDIENTE"].sum()),
         "ADEUDO_EE": float(estado_ee["PENDIENTE"].sum()),
-        "ADEUDO_TOTAL": float(estado_cuota["PENDIENTE"].sum() + estado_ee["PENDIENTE"].sum()),
+        "ADEUDO_TOTAL": float(
+            estado_cuota["PENDIENTE"].sum() + estado_ee["PENDIENTE"].sum()
+        ),
         "SALDO_FAVOR_CUOTA": saldo_final_cuota,
         "SALDO_FAVOR_EE": saldo_final_ee,
     }
-
     return {
         "estado_mensual": estado,
         "trazabilidad": trazabilidad,

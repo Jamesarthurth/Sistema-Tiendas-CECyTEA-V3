@@ -1,0 +1,36 @@
+ACTUALIZACIÓN V3.1.1 — PERIODOS CONFIGURABLES
+
+Problema corregido
+- GitHub Actions fallaba porque algunas pruebas construían MachoteV3 sin el nuevo campo configuracion.
+- Streamlit podía mostrar: 'MachoteV3' object has no attribute 'configuracion'.
+
+Qué incluye
+- Compatibilidad con pruebas y objetos MachoteV3 creados sin configuración explícita.
+- Lectura de CONFIGURACION desde el machote.
+- Filtro de movimientos entre FECHA_INICIO_PAGOS y FECHA_FIN_PAGOS.
+- Hoja Fuera de Periodo en el Excel cuando existan movimientos excluidos.
+- La app muestra periodo, rango, movimientos dentro y fuera del periodo.
+- Limpieza automática de resultados guardados por versiones anteriores de la app.
+- Prueba automática de un semestre futuro 2027-2.
+
+Archivos que debes reemplazar
+1. app.py
+2. motor_v3.py
+3. procesador_v3.py
+4. exportador_excel_v3.py
+5. pruebas_motor_v3.py
+6. pruebas_integracion_v3.py
+7. pruebas_reportes_v3.py
+8. pruebas_exportador_excel_v3.py
+9. .github/workflows/pruebas.yml
+
+El machote dentro de datos debe llamarse:
+datos/Machote_Tarifas_CECYTEA_V3.xlsx
+
+y debe contener CONFIGURACION, PLANTELES, TARIFAS y SALDOS_INICIALES.
+
+Después de reemplazar
+- Haz commit.
+- Espera que Actions quede en verde.
+- En Streamlit usa Reboot app.
+- Vuelve a cargar GLOBAL y machote.
