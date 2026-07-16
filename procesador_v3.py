@@ -158,6 +158,13 @@ def procesar_periodo(
         ["ADEUDO_TOTAL", "CLAVE_PLANTEL"], ascending=[False, True]
     ).reset_index(drop=True)
 
+    configuracion_dict = {
+        "PERIODO": configuracion.periodo,
+        "FECHA_INICIO_PAGOS": configuracion.fecha_inicio_pagos,
+        "FECHA_FIN_PAGOS": configuracion.fecha_fin_pagos,
+        "DESCRIPCION": configuracion.descripcion,
+    }
+
     return {
         "detalle_cobranza": detalle,
         "trazabilidad": trazabilidad,
@@ -165,12 +172,10 @@ def procesar_periodo(
         "movimientos_reconocidos": movimientos_reconocidos.reset_index(drop=True),
         "movimientos_no_reconocidos": movimientos_no_reconocidos.reset_index(drop=True),
         "movimientos_fuera_periodo": movimientos_fuera_periodo.reset_index(drop=True),
-        "configuracion_periodo": {
-            "PERIODO": configuracion.periodo,
-            "FECHA_INICIO_PAGOS": configuracion.fecha_inicio_pagos,
-            "FECHA_FIN_PAGOS": configuracion.fecha_fin_pagos,
-            "DESCRIPCION": configuracion.descripcion,
-        },
+        "configuracion_periodo": configuracion_dict,
+        # Alias de compatibilidad para evitar errores si una interfaz previa usa
+        # el nombre corto "configuracion".
+        "configuracion": configuracion_dict,
     }
 
 

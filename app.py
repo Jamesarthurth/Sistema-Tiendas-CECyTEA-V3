@@ -23,7 +23,7 @@ from reportes_v3 import generar_reportes
 
 
 NOMBRE_APP = "Sistema de Control de Tiendas Escolares"
-VERSION_APP = "V3.1.1"
+VERSION_APP = "V3.1.2"
 BASE_DIR = Path(__file__).resolve().parent
 MACHOTE_OFICIAL = BASE_DIR / "datos" / "Machote_Tarifas_CECYTEA_V3.xlsx"
 LOGO = BASE_DIR / "logo_cecytea.png"
@@ -91,6 +91,34 @@ def procesar_archivos_subidos(archivo_global, archivo_machote) -> dict[str, Any]
         machote = cargar_machote(ruta_machote)
         movimientos = leer_global(ruta_global, hoja="2024", fila_encabezado=1)
         resultado = procesar_periodo(machote, movimientos)
+
+        # Compatibilidad defensiva entre versiones: la configuración puede venir
+        # del procesador o directamente del objeto MachoteV3.
+        configuracion_resultado = (
+            resultado.get("configuracion_periodo")
+            or resultado.get("configuracion")
+        )
+        if not isinstance(configuracion_resultado, dict):
+            configuracion_obj = getattr(machote, "configuracion", None)
+            if configuracion_obj is None:
+                raise ValueError(
+                    "No fue posible obtener la configuración del periodo. "
+                    "Verifica que el machote tenga la hoja CONFIGURACION y que "
+                    "motor_v3.py y procesador_v3.py sean de la misma versión."
+                )
+            configuracion_resultado = {
+                "PERIODO": configuracion_obj.periodo,
+                "FECHA_INICIO_PAGOS": configuracion_obj.fecha_inicio_pagos,
+                "FECHA_FIN_PAGOS": configuracion_obj.fecha_fin_pagos,
+                "DESCRIPCION": configuracion_obj.descripcion,
+            }
+            resultado["configuracion_periodo"] = configuracion_resultado
+
+        if "movimientos_fuera_periodo" not in resultado:
+            resultado["movimientos_fuera_periodo"] = pd.DataFrame(
+                columns=movimientos.columns
+            )
+
         reportes = generar_reportes(resultado)
         exportar_excel_v3(resultado, ruta_reporte)
 
@@ -101,7 +129,7 @@ def procesar_archivos_subidos(archivo_global, archivo_machote) -> dict[str, Any]
             "planteles_activos": machote.planteles.copy(),
             "tarifas": machote.tarifas.copy(),
             "movimientos_leidos": movimientos.copy(),
-            "configuracion": resultado["configuracion_periodo"],
+            "configuracion": configuracion_resultado,
         }
 
 

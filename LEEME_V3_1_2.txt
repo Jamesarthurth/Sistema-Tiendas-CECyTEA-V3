@@ -1,0 +1,16 @@
+V3.1.2 - Hotfix de configuración
+
+Reemplazar únicamente en la raíz del repositorio:
+- app.py
+- procesador_v3.py
+
+Luego:
+1. Commit: V3.1.2: corregir lectura de configuración del periodo
+2. Esperar GitHub Actions en verde.
+3. Reboot de la app en Streamlit.
+4. Volver a cargar GLOBAL y el machote con CONFIGURACION.
+
+Corrección:
+- Evita KeyError 'configuracion_periodo'.
+- El procesador devuelve configuracion_periodo y configuracion como alias.
+- La app usa una lectura defensiva desde el resultado o desde MachoteV3.
