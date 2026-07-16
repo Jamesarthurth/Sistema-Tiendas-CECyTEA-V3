@@ -3,6 +3,7 @@ name: Pruebas Motor V3
 on:
   push:
     paths:
+      - "app.py"
       - "motor_v3.py"
       - "lector_global.py"
       - "procesador_v3.py"
@@ -36,6 +37,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
+      - name: Validar sintaxis de módulos
+        run: python -m py_compile app.py motor_v3.py lector_global.py procesador_v3.py reportes_v3.py exportador_excel_v3.py generar_excel_v3.py
 
       - name: Ejecutar pruebas del motor FIFO
         run: python pruebas_motor_v3.py
