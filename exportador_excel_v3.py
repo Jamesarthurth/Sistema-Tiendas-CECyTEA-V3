@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import Mapping
+from typing import Any, Mapping
 
 import pandas as pd
 from openpyxl import load_workbook
@@ -145,16 +145,32 @@ def _pintar_ejecutivo(ws) -> None:
         ws.column_dimensions[letra].width = 20 if letra != "B" else 34
 
 
-def _crear_resumen(resultados: Mapping[str, pd.DataFrame], adeudos: pd.DataFrame) -> pd.DataFrame:
+def _crear_resumen(resultados: Mapping[str, Any], adeudos: pd.DataFrame) -> pd.DataFrame:
     """Crea una hoja breve de control sin recalcular los importes operativos."""
     resumen = resultados["resumen_planteles"]
     fecha = datetime.now().strftime("%d/%m/%Y %H:%M")
+    configuracion = resultados.get("configuracion_periodo", {}) or {}
+    fuera_periodo = resultados.get("movimientos_fuera_periodo")
+    cantidad_fuera = int(len(fuera_periodo)) if isinstance(fuera_periodo, pd.DataFrame) else 0
+
+    fecha_inicio = configuracion.get("FECHA_INICIO_PAGOS", "")
+    fecha_fin = configuracion.get("FECHA_FIN_PAGOS", "")
+    if isinstance(fecha_inicio, (pd.Timestamp, datetime)):
+        fecha_inicio = pd.Timestamp(fecha_inicio).strftime("%d/%m/%Y")
+    if isinstance(fecha_fin, (pd.Timestamp, datetime)):
+        fecha_fin = pd.Timestamp(fecha_fin).strftime("%d/%m/%Y")
+
     return pd.DataFrame(
         [
             ["Fecha de generación", fecha],
+            ["Periodo", configuracion.get("PERIODO", "")],
+            ["Descripción del periodo", configuracion.get("DESCRIPCION", "")],
+            ["Fecha inicial de pagos", fecha_inicio],
+            ["Fecha final de pagos", fecha_fin],
             ["Planteles activos procesados", int(len(resumen))],
             ["Planteles con adeudo", int((adeudos["ADEUDO_TOTAL"] > 0.005).sum())],
             ["Planteles con saldo a favor", int((adeudos["SALDO_FAVOR_TOTAL"] > 0.005).sum())],
+            ["Movimientos fuera del periodo", cantidad_fuera],
             ["Adeudo total", float(adeudos["ADEUDO_TOTAL"].sum())],
             ["Saldo a favor total", float(adeudos["SALDO_FAVOR_TOTAL"].sum())],
         ],
@@ -163,7 +179,7 @@ def _crear_resumen(resultados: Mapping[str, pd.DataFrame], adeudos: pd.DataFrame
 
 
 def exportar_excel_v3(
-    resultado_procesamiento: Mapping[str, pd.DataFrame],
+    resultado_procesamiento: Mapping[str, Any],
     destino: str | Path,
 ) -> Path:
     """Crea el Excel final a partir de la salida de ``procesar_periodo``.
@@ -189,6 +205,10 @@ def exportar_excel_v3(
     no_reconocidos = resultado_procesamiento.get("movimientos_no_reconocidos")
     if isinstance(no_reconocidos, pd.DataFrame) and not no_reconocidos.empty:
         hojas.append(("Movimientos por Revisar", no_reconocidos))
+
+    fuera_periodo = resultado_procesamiento.get("movimientos_fuera_periodo")
+    if isinstance(fuera_periodo, pd.DataFrame) and not fuera_periodo.empty:
+        hojas.append(("Fuera de Periodo", fuera_periodo))
 
     with pd.ExcelWriter(destino, engine="openpyxl") as writer:
         for nombre_hoja, df in hojas:

@@ -17,6 +17,16 @@ ESTATUS_ACTIVOS = {"ACTIVA", "ACTIVO"}
 TOLERANCIA = 0.005
 
 
+@dataclass(frozen=True)
+class ConfiguracionPeriodo:
+    """Configuración temporal definida dentro del machote V3."""
+
+    periodo: str
+    fecha_inicio_pagos: pd.Timestamp
+    fecha_fin_pagos: pd.Timestamp
+    descripcion: str
+
+
 @dataclass
 class MachoteV3:
     """Datos normalizados del machote de tarifas V3."""
@@ -24,6 +34,23 @@ class MachoteV3:
     planteles: pd.DataFrame
     tarifas: pd.DataFrame
     saldos_iniciales: pd.DataFrame
+    configuracion: ConfiguracionPeriodo
+
+    @property
+    def periodo(self) -> str:
+        return self.configuracion.periodo
+
+    @property
+    def fecha_inicio_pagos(self) -> pd.Timestamp:
+        return self.configuracion.fecha_inicio_pagos
+
+    @property
+    def fecha_fin_pagos(self) -> pd.Timestamp:
+        return self.configuracion.fecha_fin_pagos
+
+    @property
+    def descripcion_periodo(self) -> str:
+        return self.configuracion.descripcion
 
 
 def _normalizar_columna(valor: Any) -> str:
@@ -68,6 +95,43 @@ def _a_numero(serie: pd.Series, nombre: str) -> pd.Series:
         ejemplos = serie.loc[invalidos].head(5).tolist()
         raise ValueError(f"La columna '{nombre}' contiene montos no válidos: {ejemplos}")
     return convertido.fillna(0.0).astype(float)
+
+
+def _leer_configuracion_periodo(archivo: str | Path) -> ConfiguracionPeriodo | None:
+    """Lee la hoja CONFIGURACION. Devuelve None para machotes V3 antiguos."""
+    try:
+        config = _leer_hoja_con_encabezado(archivo, "CONFIGURACION", ["CAMPO", "VALOR"])
+    except (ValueError, KeyError):
+        return None
+
+    config["CAMPO"] = config["CAMPO"].map(_normalizar_columna)
+    config = config[config["CAMPO"] != ""].copy()
+    if config["CAMPO"].duplicated().any():
+        repetidos = config.loc[config["CAMPO"].duplicated(keep=False), "CAMPO"].tolist()
+        raise ValueError(f"La hoja CONFIGURACION contiene campos repetidos: {repetidos}")
+
+    valores = dict(zip(config["CAMPO"], config["VALOR"]))
+    requeridos = {"PERIODO", "FECHA_INICIO_PAGOS", "FECHA_FIN_PAGOS"}
+    faltantes = sorted(requeridos.difference(valores))
+    if faltantes:
+        raise ValueError(f"Faltan campos obligatorios en CONFIGURACION: {faltantes}")
+
+    periodo = str(valores["PERIODO"]).strip()
+    if not periodo:
+        raise ValueError("PERIODO no puede quedar vacío en CONFIGURACION.")
+
+    fecha_inicio = pd.to_datetime(valores["FECHA_INICIO_PAGOS"], errors="coerce")
+    fecha_fin = pd.to_datetime(valores["FECHA_FIN_PAGOS"], errors="coerce")
+    if pd.isna(fecha_inicio) or pd.isna(fecha_fin):
+        raise ValueError("FECHA_INICIO_PAGOS y FECHA_FIN_PAGOS deben ser fechas válidas.")
+
+    fecha_inicio = pd.Timestamp(fecha_inicio).normalize()
+    fecha_fin = pd.Timestamp(fecha_fin).normalize()
+    if fecha_inicio > fecha_fin:
+        raise ValueError("FECHA_INICIO_PAGOS no puede ser posterior a FECHA_FIN_PAGOS.")
+
+    descripcion = str(valores.get("DESCRIPCION", periodo) or periodo).strip()
+    return ConfiguracionPeriodo(periodo, fecha_inicio, fecha_fin, descripcion)
 
 
 def cargar_machote(archivo: str | Path) -> MachoteV3:
@@ -195,7 +259,36 @@ def cargar_machote(archivo: str | Path) -> MachoteV3:
     ).reset_index(drop=True)
     activos = activos[["CLAVE_PLANTEL", "NOMBRE_PLANTEL", "ESTATUS_TIENDA"]].sort_values("CLAVE_PLANTEL").reset_index(drop=True)
 
-    return MachoteV3(planteles=activos, tarifas=tarifas, saldos_iniciales=saldos)
+    configuracion = _leer_configuracion_periodo(archivo)
+    if configuracion is None:
+        # Compatibilidad con machotes anteriores: el rango se deriva de TARIFAS.
+        primer_mes = pd.Timestamp(tarifas["MES"].min()).normalize()
+        ultimo_mes = pd.Timestamp(tarifas["MES"].max())
+        fin_mes = (ultimo_mes + pd.offsets.MonthEnd(0)).normalize()
+        configuracion = ConfiguracionPeriodo(
+            periodo=f"{primer_mes.year}-AUTO",
+            fecha_inicio_pagos=primer_mes,
+            fecha_fin_pagos=fin_mes,
+            descripcion="Periodo derivado automáticamente de TARIFAS",
+        )
+
+    meses_fuera = tarifas[
+        (tarifas["MES"] < configuracion.fecha_inicio_pagos.to_period("M").to_timestamp())
+        | (tarifas["MES"] > configuracion.fecha_fin_pagos.to_period("M").to_timestamp())
+    ]
+    if not meses_fuera.empty:
+        ejemplos = meses_fuera[["CLAVE_PLANTEL", "MES"]].head(10).to_dict("records")
+        raise ValueError(
+            "Hay meses en TARIFAS fuera del rango definido en CONFIGURACION. "
+            f"Ejemplos: {ejemplos}"
+        )
+
+    return MachoteV3(
+        planteles=activos,
+        tarifas=tarifas,
+        saldos_iniciales=saldos,
+        configuracion=configuracion,
+    )
 
 
 def _normalizar_pagos(pagos: pd.DataFrame | list[dict[str, Any]]) -> pd.DataFrame:

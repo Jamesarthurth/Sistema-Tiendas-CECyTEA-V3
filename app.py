@@ -23,7 +23,7 @@ from reportes_v3 import generar_reportes
 
 
 NOMBRE_APP = "Sistema de Control de Tiendas Escolares"
-VERSION_APP = "V3.0"
+VERSION_APP = "V3.1"
 BASE_DIR = Path(__file__).resolve().parent
 MACHOTE_OFICIAL = BASE_DIR / "datos" / "Machote_Tarifas_CECYTEA_V3.xlsx"
 LOGO = BASE_DIR / "logo_cecytea.png"
@@ -101,6 +101,7 @@ def procesar_archivos_subidos(archivo_global, archivo_machote) -> dict[str, Any]
             "planteles_activos": machote.planteles.copy(),
             "tarifas": machote.tarifas.copy(),
             "movimientos_leidos": movimientos.copy(),
+            "configuracion": machote.configuracion,
         }
 
 
@@ -197,6 +198,15 @@ def _mostrar_resultados(datos: dict[str, Any]) -> None:
     adeudos = reportes["adeudos"].copy()
     tarifas = datos["tarifas"].copy()
     no_reconocidos = resultado["movimientos_no_reconocidos"].copy()
+    fuera_periodo = resultado.get("movimientos_fuera_periodo", pd.DataFrame()).copy()
+    configuracion = datos["configuracion"]
+
+    st.info(
+        f"**Periodo detectado:** {configuracion.periodo} · "
+        f"**Rango de pagos:** {configuracion.fecha_inicio_pagos.strftime('%d/%m/%Y')} "
+        f"al {configuracion.fecha_fin_pagos.strftime('%d/%m/%Y')} · "
+        f"**Descripción:** {configuracion.descripcion}"
+    )
 
     total_planteles = len(adeudos)
     con_adeudo = int((adeudos["ADEUDO_TOTAL"] > 0.005).sum())
@@ -212,10 +222,23 @@ def _mostrar_resultados(datos: dict[str, Any]) -> None:
     c3.metric("Con adeudo", con_adeudo)
     c4.metric("Adeudo total", _dinero(adeudo_total))
 
-    c5, c6, c7 = st.columns(3)
+    c5, c6, c7, c8 = st.columns(4)
     c5.metric("Saldo a favor total", _dinero(saldo_favor))
-    c6.metric("Movimientos de tienda leídos", len(datos["movimientos_leidos"]))
-    c7.metric("Meses detectados", len(meses), help=", ".join(meses))
+    c6.metric("Movimientos leídos", len(datos["movimientos_leidos"]))
+    c7.metric("Dentro del periodo", len(resultado["movimientos_reconocidos"]))
+    c8.metric("Fuera del periodo", len(fuera_periodo))
+
+    st.caption(f"Meses tarifados ({len(meses)}): {', '.join(meses)}")
+
+    if fuera_periodo.empty:
+        st.success("Todos los movimientos leídos pertenecen al rango configurado.")
+    else:
+        st.warning(
+            f"Se excluyeron {len(fuera_periodo)} movimiento(s) por estar fuera del periodo {configuracion.periodo}. "
+            "Quedaron disponibles en la hoja 'Fuera de Periodo' del reporte."
+        )
+        with st.expander("Ver movimientos fuera del periodo"):
+            st.dataframe(fuera_periodo, use_container_width=True, hide_index=True)
 
     if no_reconocidos.empty:
         st.success("No se encontraron movimientos con claves fuera del catálogo activo.")
@@ -288,7 +311,7 @@ def main() -> None:
     st.markdown('<div class="section-label">Cómo usar el sistema</div>', unsafe_allow_html=True)
     a, b, c = st.columns(3)
     with a:
-        st.markdown("<div class='small-card'><b>1. Descarga y actualiza el machote</b><br><br>Captura planteles, estatus, meses, cuotas, EE y saldos iniciales.</div>", unsafe_allow_html=True)
+        st.markdown("<div class='small-card'><b>1. Descarga y actualiza el machote</b><br><br>Captura configuración del periodo, planteles, estatus, meses, cuotas, EE y saldos iniciales.</div>", unsafe_allow_html=True)
     with b:
         st.markdown("<div class='small-card'><b>2. Sube GLOBAL y el machote</b><br><br>GLOBAL se lee por la clave de los primeros tres caracteres de Matrícula.</div>", unsafe_allow_html=True)
     with c:
@@ -308,7 +331,7 @@ def main() -> None:
             "Machote V3 actualizado (.xlsx)",
             type=["xlsx"],
             key="archivo_machote",
-            help="Usa el machote descargado en esta página. El sistema detecta los meses desde la hoja TARIFAS.",
+            help="Usa el machote descargado en esta página. El sistema detecta el periodo desde CONFIGURACION y los meses desde TARIFAS.",
         )
 
     st.info(
@@ -331,7 +354,7 @@ def main() -> None:
                     """
                     Revisa que:
                     - GLOBAL tenga la hoja `2024`.
-                    - El machote tenga las hojas `PLANTELES`, `TARIFAS` y `SALDOS_INICIALES`.
+                    - El machote tenga las hojas `CONFIGURACION`, `PLANTELES`, `TARIFAS` y `SALDOS_INICIALES`.
                     - Todo plantel con estatus `ACTIVA` tenga clave y tarifas.
                     - Cuota, EE y saldos sean importes numéricos no negativos.
                     - No existan dos filas de tarifas para la misma clave y el mismo mes.

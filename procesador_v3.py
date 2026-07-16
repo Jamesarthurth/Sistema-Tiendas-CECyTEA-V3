@@ -97,9 +97,29 @@ def procesar_periodo(
     if movimientos_global is None:
         movimientos_global = pd.DataFrame()
 
+    movimientos_global = movimientos_global.copy()
+    if movimientos_global.empty:
+        movimientos_periodo = movimientos_global.copy()
+        movimientos_fuera_periodo = movimientos_global.copy()
+    else:
+        if "FECHA" not in movimientos_global.columns:
+            raise ValueError("Los movimientos normalizados deben incluir la columna FECHA.")
+        movimientos_global["FECHA"] = pd.to_datetime(movimientos_global["FECHA"], errors="coerce")
+        if movimientos_global["FECHA"].isna().any():
+            raise ValueError("Hay movimientos con FECHA inválida antes de filtrar el periodo.")
+
+        fechas = movimientos_global["FECHA"].dt.normalize()
+        dentro_periodo = fechas.between(
+            machote.fecha_inicio_pagos,
+            machote.fecha_fin_pagos,
+            inclusive="both",
+        )
+        movimientos_periodo = movimientos_global.loc[dentro_periodo].copy()
+        movimientos_fuera_periodo = movimientos_global.loc[~dentro_periodo].copy()
+
     claves_activas = set(machote.planteles["CLAVE_PLANTEL"].astype(str).str.upper())
     movimientos_reconocidos, movimientos_no_reconocidos = separar_movimientos_por_catalogo(
-        movimientos_global,
+        movimientos_periodo,
         claves_activas,
     )
 
@@ -168,6 +188,13 @@ def procesar_periodo(
         "resumen_planteles": resumen,
         "movimientos_reconocidos": movimientos_reconocidos.reset_index(drop=True),
         "movimientos_no_reconocidos": movimientos_no_reconocidos.reset_index(drop=True),
+        "movimientos_fuera_periodo": movimientos_fuera_periodo.reset_index(drop=True),
+        "configuracion_periodo": {
+            "PERIODO": machote.periodo,
+            "FECHA_INICIO_PAGOS": machote.fecha_inicio_pagos,
+            "FECHA_FIN_PAGOS": machote.fecha_fin_pagos,
+            "DESCRIPCION": machote.descripcion_periodo,
+        },
     }
 
 

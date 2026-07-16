@@ -1,0 +1,18 @@
+ACTUALIZACION V3.1 - PERIODOS CONFIGURABLES
+
+Reemplaza en la raiz del repositorio:
+- motor_v3.py
+- procesador_v3.py
+- exportador_excel_v3.py
+- app.py
+
+Asegurate de que datos/Machote_Tarifas_CECYTEA_V3.xlsx sea la version que incluye la hoja CONFIGURACION.
+
+Commit sugerido:
+V3.1: configuracion de periodos y movimientos fuera de periodo
+
+Luego:
+1. Espera que GitHub Actions quede en verde.
+2. Reinicia la app de Streamlit.
+3. Sube GLOBAL y machote.
+4. Confirma que aparezca el periodo detectado.
