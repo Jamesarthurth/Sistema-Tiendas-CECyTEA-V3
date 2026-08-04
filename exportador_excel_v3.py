@@ -17,8 +17,7 @@ silencio.
 
 from __future__ import annotations
 
-from datetime import datetime
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping
 
@@ -37,6 +36,15 @@ ROJO = "FFC7CE"
 GRIS = "D9E1F2"
 BLANCO = "FFFFFF"
 BORDE = Side(style="thin", color="D9E1F2")
+
+
+# Aguascalientes usa UTC-6 durante todo el año. Se utiliza un desfase fijo para
+# evitar que una base de zonas horarias desactualizada en el servidor aplique
+# por error el antiguo horario de verano de México.
+ZONA_HORARIA_AGUASCALIENTES = timezone(
+    timedelta(hours=-6),
+    name="Aguascalientes (UTC-6)",
+)
 
 NOMBRES_HOJAS_BASE = [
     "Reporte Ejecutivo",
@@ -149,10 +157,11 @@ def _pintar_ejecutivo(ws) -> None:
 def _crear_resumen(resultados: Mapping[str, pd.DataFrame], adeudos: pd.DataFrame) -> pd.DataFrame:
     """Crea una hoja breve de control sin recalcular los importes operativos."""
     resumen = resultados["resumen_planteles"]
-    fecha = datetime.now(ZoneInfo("America/Mexico_City")).strftime("%d/%m/%Y %H:%M")
+    fecha = datetime.now(ZONA_HORARIA_AGUASCALIENTES).strftime("%d/%m/%Y %H:%M")
     return pd.DataFrame(
         [
             ["Fecha de generación", fecha],
+            ["Zona horaria", "Aguascalientes, México (UTC-6)"],
             ["Planteles activos procesados", int(len(resumen))],
             ["Planteles con adeudo", int((adeudos["ADEUDO_TOTAL"] > 0.005).sum())],
             ["Planteles con saldo a favor", int((adeudos["SALDO_FAVOR_TOTAL"] > 0.005).sum())],
