@@ -11,15 +11,14 @@ Hojas principales:
 - Trazabilidad
 
 Cuando existen movimientos con claves fuera del catálogo activo, se agrega una
-hoja adicional: ``Movimientos por Revisar``. Cuando existen movimientos con fecha
-fuera del rango configurado, se agrega ``Fuera de Periodo``. Así ningún depósito
-se pierde en silencio.
+hoja adicional: ``Movimientos por Revisar``. La hoja ``Fuera de Periodo`` se
+genera siempre; si no hay movimientos excluidos, conserva únicamente los
+encabezados. Así ningún depósito se pierde en silencio.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping
 
@@ -38,6 +37,15 @@ ROJO = "FFC7CE"
 GRIS = "D9E1F2"
 BLANCO = "FFFFFF"
 BORDE = Side(style="thin", color="D9E1F2")
+
+
+# Aguascalientes usa UTC-6 durante todo el año. Se utiliza un desfase fijo para
+# evitar que una base de zonas horarias desactualizada en el servidor aplique
+# por error el antiguo horario de verano de México.
+ZONA_HORARIA_AGUASCALIENTES = timezone(
+    timedelta(hours=-6),
+    name="Aguascalientes (UTC-6)",
+)
 
 NOMBRES_HOJAS_BASE = [
     "Reporte Ejecutivo",
@@ -150,10 +158,11 @@ def _pintar_ejecutivo(ws) -> None:
 def _crear_resumen(resultados: Mapping[str, pd.DataFrame], adeudos: pd.DataFrame) -> pd.DataFrame:
     """Crea una hoja breve de control sin recalcular los importes operativos."""
     resumen = resultados["resumen_planteles"]
-    fecha = datetime.now(ZoneInfo("America/Mexico_City")).strftime("%d/%m/%Y %H:%M")
+    fecha = datetime.now(ZONA_HORARIA_AGUASCALIENTES).strftime("%d/%m/%Y %H:%M")
     return pd.DataFrame(
         [
             ["Fecha de generación", fecha],
+            ["Zona horaria", "Aguascalientes, México (UTC-6)"],
             ["Planteles activos procesados", int(len(resumen))],
             ["Planteles con adeudo", int((adeudos["ADEUDO_TOTAL"] > 0.005).sum())],
             ["Planteles con saldo a favor", int((adeudos["SALDO_FAVOR_TOTAL"] > 0.005).sum())],
@@ -192,9 +201,18 @@ def exportar_excel_v3(
     if isinstance(no_reconocidos, pd.DataFrame) and not no_reconocidos.empty:
         hojas.append(("Movimientos por Revisar", no_reconocidos))
 
+    # La hoja se agrega SIEMPRE. Si no existen movimientos fuera del rango,
+    # se exportan únicamente los encabezados para que el usuario pueda comprobar
+    # que el control del periodo está activo.
     fuera_periodo = resultado_procesamiento.get("movimientos_fuera_periodo")
-    if isinstance(fuera_periodo, pd.DataFrame) and not fuera_periodo.empty:
-        hojas.append(("Fuera de Periodo", fuera_periodo))
+    if not isinstance(fuera_periodo, pd.DataFrame):
+        fuera_periodo = pd.DataFrame(
+            columns=[
+                "ID_MOVIMIENTO", "FECHA", "CLAVE_PLANTEL", "MATRICULA",
+                "NOMBRE_ORIGINAL", "REFERENCIA_GLOBAL", "PAGO_CUOTA", "PAGO_EE",
+            ]
+        )
+    hojas.append(("Fuera de Periodo", fuera_periodo))
 
     with pd.ExcelWriter(destino, engine="openpyxl") as writer:
         for nombre_hoja, df in hojas:
